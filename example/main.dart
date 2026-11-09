@@ -1,8 +1,8 @@
-// Example: read-only usage of `hive_dart`.
+// Example: read-only usage of `hiveblockchain_dart`.
 //
 // Run with: `dart example/main.dart`
 // (reads public data from api.hive.blog; no keys involved).
-import 'package:hive_dart/hive_dart.dart';
+import 'package:hiveblockchain_dart/hiveblockchain_dart.dart';
 
 Future<void> main() async {
   final client = HiveClient();

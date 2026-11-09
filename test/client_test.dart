@@ -2,7 +2,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:hive_dart/hive_dart.dart';
+import 'package:hiveblockchain_dart/hiveblockchain_dart.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:test/test.dart';

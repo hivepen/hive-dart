@@ -1,32 +1,55 @@
-# hive_dart
 
-Pure-Dart client for the Hive blockchain — JSON-RPC reads, offline
-transaction building and signing (`custom_json`, `comment`,
-`comment_options`), and HiveAuth / Hive Keychain auth helpers. No
-Flutter dependency, so any Dart or Flutter app can depend on it by path.
+# hiveblockchain_dart
 
-This is the shared Hive layer for the Hivepen apps (Gloti, Genioo,
-Hivepen Studio). Version 0.1.0 is deliberately small: reads, three
-operations, and auth helpers — nothing more.
+Pure-Dart client for the [Hive](https://hive.io/) blockchain — JSON-RPC
+reads, offline transaction building and signing, and HiveAuth / Hive
+Keychain auth helpers. No Flutter dependency: it works in any Dart
+app — server, CLI, web, mobile, or desktop.
 
-## Install
+[![pub package](https://img.shields.io/pub/v/hiveblockchain_dart.svg)](https://pub.dev/packages/hiveblockchain_dart)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+## Features
+
+- **Reads over JSON-RPC** — accounts, posts, account history, global
+  properties, block headers, with automatic node failover.
+- **Offline transaction signing** — build and sign `custom_json`,
+  `comment`, and `comment_options` transactions locally. Private keys
+  never leave the caller; broadcasting is a separate, opt-in call.
+- **Wallet auth, without handling keys** — HiveAuth (HAS) message
+  building/decoding and Hive Keychain `hive://` deep links, so the
+  wallet signs and your app never sees a private key.
+- **Byte-for-byte compatible with dhive** — serialization and
+  signatures verified against `@hiveio/dhive` 1.3.2 test vectors.
+- **Pure Dart** — no FFI, no platform channels. Runs on every Dart
+  platform, including web.
+
+## Installation
 
 ```yaml
 dependencies:
-  hive_dart:
-    path: ../hive-dart
+  hiveblockchain_dart: ^0.2.0
 ```
 
-Requires Dart `^3.5.0`.
+Requires Dart `^3.5.0`. Also available straight from GitHub:
 
-## Reads
+```yaml
+dependencies:
+  hiveblockchain_dart:
+    git:
+      url: https://github.com/hivepen/hive-dart.git
+```
+
+## Quick start
+
+### Read public data
 
 ```dart
-import 'package:hive_dart/hive_dart.dart';
+import 'package:hiveblockchain_dart/hiveblockchain_dart.dart';
 
 final client = HiveClient(); // default nodes, 10 s timeout
 try {
-  final account = await client.getAccount('carlosepc');
+  final account = await client.getAccount('alice');
   print(account?.balance); // "10.500 HIVE"
 
   final post = await client.getContent('alice', 'my-first-post');
@@ -40,22 +63,12 @@ try {
 }
 ```
 
-Available methods: `getAccounts`, `getAccount`, `getContent`,
-`getAccountHistory`, `getDynamicGlobalProperties`, `getBlockHeader`.
-All calls are plain JSON-RPC over HTTPS (`condenser_api` /
-`account_history_api`); no keys involved.
+Reads are plain JSON-RPC over HTTPS (`condenser_api` /
+`account_history_api`); no keys involved. Available methods:
+`getAccounts`, `getAccount`, `getContent`, `getAccountHistory`,
+`getDynamicGlobalProperties`, `getBlockHeader`.
 
-`getAccountHistory` accepts both wire shapes: live nodes answer
-`{"history": [...]}` with ops as `{type: "..._operation", value:
-{...}}` and amounts as NAI objects (`{nai, amount, precision}` —
-`@@000000021` HIVE, `@@000000013` HBD, `@@000000037` VESTS), which
-the parser normalises to the legacy `[name, fields]` tuple with
-`"1.234 HIVE"` strings; a bare list (the legacy `condenser_api`
-shape) parses the same way. `HiveAccount` exposes both
-`jsonMetadata` and `postingJsonMetadata` — the profile block lives
-in the latter for most accounts.
-
-### Node configuration and failover
+### Nodes and failover
 
 ```dart
 final client = HiveClient(
@@ -71,26 +84,27 @@ final client = HiveClient(
 
 Nodes are tried in order. A **transport** failure (unreachable node,
 timeout, non-2xx HTTP status) fails over to the next node; a
-**JSON-RPC error** returned by a node (e.g. an assert exception) is
-reported as `HiveRpcException` and does **not** trigger failover —
-the node answered, so retrying elsewhere would only repeat the same
-error. If every node fails at transport level, the client throws
+**JSON-RPC error** returned by a node is reported as
+`HiveRpcException` and does **not** trigger failover — the node
+answered, so retrying elsewhere would only repeat the same error. If
+every node fails at transport level, the client throws
 `HiveNetworkException`.
 
-## Transactions (offline signing)
+### Sign and broadcast a `custom_json`
 
 Building and signing never touches the network. Broadcasting is a
 separate, opt-in call — nothing in this package broadcasts on its own.
 
 ```dart
-// Build an unsigned transaction (fetches head-block data for the
-// ref block — the only network call in this flow).
 final op = HiveOperation.customJson(
   requiredAuths: const [],
   requiredPostingAuths: const ['alice'],
-  id: 'genioo_achievement',
-  json: '{"game":"minesweeper","score":42}',
+  id: 'myapp_action',
+  json: '{"action":"check-in","value":42}',
 );
+
+// Build an unsigned transaction (fetches head-block data for the
+// ref block — the only network call in this flow).
 final tx = await client.prepareTransaction([op]);
 
 // Sign with the posting key (the key never leaves the caller).
@@ -104,43 +118,47 @@ print(result.id); // transaction id
 
 Or in one step: `client.broadcastOperations([op], key)`.
 
-Supported operations in v1: `custom_json` (id 18), `comment`
-(id 1) and `comment_options` (id 19, incl. beneficiary
-extensions). `HiveTransaction.sign` uses the Hive mainnet chain id and
-RFC 6979 deterministic nonces; the signature is canonical (low-s)
-with the recovery id encoded as dhive does (`recovery + 31`).
-
-> **Keys:** `HivePrivateKey.fromWif` / `fromSeed` / `fromLogin`
-> exist for signing. Never log a private key and never write one to
-> disk — `toString()` on `HivePrivateKey` deliberately does not
-> return the WIF. For production apps prefer HiveAuth or Keychain
-> (below) so the key never enters the app at all.
-
-## Auth (no secrets stored)
-
-### HiveAuth (HAS)
-
-The app talks to the HiveAuth server (`wss://has.hiveauth.com`) over
-a WebSocket it owns; this package builds and decodes the messages.
-The `auth_key` is generated by the app and shared with the wallet
-out of band (QR code or `has://auth_req/<base64>` deep link).
+### Publish a post
 
 ```dart
-const authKey = 'a-uuid-generated-by-the-app';
-final app = HiveAuthApp(
-  name: 'Gloti',
-  description: 'Learn English by reading',
-  icon: 'https://gloti.hivepen.com/icon.png',
+final post = HiveOperation.comment(
+  parentAuthor: '',
+  parentPermlink: 'hive-123456', // community or tag
+  author: 'alice',
+  permlink: 'my-first-post',
+  title: 'Hello, Hive',
+  body: 'My first post from Dart.',
+  jsonMetadata: '{"tags":["introduction"],"app":"myapp/0.1.0"}',
 );
 
-// 1. Send over the socket:
+final options = HiveOperation.commentOptions(
+  author: 'alice',
+  permlink: 'my-first-post',
+  beneficiaries: const [HiveBeneficiary('myapp', 1000)], // 10%
+);
+
+await client.broadcastOperations([post, options], key);
+```
+
+### Let the wallet sign (recommended for production)
+
+Prefer HiveAuth or Hive Keychain so private keys never enter your app
+at all.
+
+```dart
+// HiveAuth: build the auth request, send it over your own WebSocket
+// to wss://has.hiveauth.com, and decode the wallet's replies.
 final req = HiveAuth.authRequest(
-  account: 'alice', authKey: authKey, app: app);
-// 2. The wallet replies auth_wait (uuid + expire):
+  account: 'alice',
+  authKey: authKey, // a UUID generated by your app, per session
+  app: HiveAuthApp(
+    name: 'My App',
+    description: 'Does useful things on Hive',
+    icon: 'https://example.com/icon.png',
+  ),
+);
 final wait = HiveAuth.parseWait(waitMessage);
-// 3. The wallet replies auth_ack (encrypted):
-final ack = HiveAuth.decryptAck(ackMessage, authKey);
-//    ack['token'] + ack['expire'] = session.
+final ack = HiveAuth.decryptAck(ackMessage, authKey); // session token
 
 // Ask the wallet to sign (and broadcast) ops:
 final signReq = HiveAuth.signRequest(
@@ -152,13 +170,8 @@ final signReq = HiveAuth.signRequest(
 );
 ```
 
-`HiveAuthPayload` builds/parses the `has://auth_req/...` deep link
-used to hand the `{account, uuid, key, host}` payload to the wallet.
-
-### Hive Keychain (hive-uri deep links)
-
 ```dart
-// Open in the wallet app (or browser) — the wallet signs and
+// Hive Keychain: open the deep link and the wallet signs,
 // optionally broadcasts, then calls back to `cb`.
 final uri = HiveKeychain.signOpUri(
   op,
@@ -168,196 +181,66 @@ final uri = HiveKeychain.signOpUri(
 ```
 
 Also available: `signOpsUri` (several ops), `signTxUri` (a full
-unsigned transaction), and `parseSignUri` (decode a
-`hive://sign/...` URI back into action + payload + params).
+unsigned transaction), `parseSignUri` (decode a `hive://sign/...`
+URI), and `HiveAuthPayload` for the `has://auth_req/...` deep link.
 
 ## Security notes
 
 - Private keys are never logged, never written to disk, and never
-  sent to any server by this package. `broadcast(tx)` only sends the
+  sent to any server by this package. `broadcast` only sends the
   signed transaction.
 - `HivePrivateKey.toString()` does not expose the WIF.
-- The HAS `auth_key` is a session key, not a Hive key; rotate it per
-  session.
+- The HiveAuth `auth_key` is a session key, not a Hive key; rotate
+  it per session.
 - Unit tests use only fake HTTP clients and published test vectors.
   No test uses a real key or broadcasts anything.
 
-## Crypto choice
+## What is supported
 
-**pointycastle** (`^4.0.0`, pure Dart) provides the secp256k1 curve
-math, SHA-256 / RIPEMD-160 / MD5 / SHA-512, HMAC and AES-CBC. The
-signing math itself (RFC 6979 deterministic nonce with dhive's
-additional-data step, canonical-signature loop, low-s normalisation,
-recovery-id computation) is implemented in `lib/src/crypto.dart` on
-top of pointycastle, so the wire format matches dhive byte for byte.
+Version 0.2.0 covers the essentials for apps that read Hive and
+publish simple actions:
 
-Why pointycastle and not the alternatives:
-
-- `sec` — a thin wrapper around pointycastle, small user base and
-  unverified maintenance; it would not have saved any code, since
-  the dhive-compatible signing loop has to be hand-written anyway.
-- `cipherbird_dart` — native FFI/WASM engine; far too heavy for a
-  small package that must also work on web.
-- `cryptography` — WebCrypto-backed on web, less control over the
-  deterministic nonce, and a bigger API surface than needed.
-
-pointycastle is the maintained, pure-Dart option (works on web with
-no FFI), and it is the library dhive's Dart equivalents typically
-build on.
-
-## Hive protocol decisions
-
-Sources: dhive 1.3.2 (`@hiveio/dhive`, `src/crypto.ts`,
-`src/chain/transaction.ts`, `src/chain/serializer.ts`,
-`src/chain/operation.ts`, `src/client.ts`), the HiveAuth protocol
-docs (docs.hiveauth.com), and the hive-uri spec (npm `hive-uri`).
-
-- **Chain id (mainnet):**
-  `beeab0de00000000000000000000000000000000000000000000000000000000000`
-  (note: `beeab0de`, not `beeab0f2`).
-- **Address prefix:** `STM`.
-- **JSON-RPC envelope:** `{"jsonrpc":"2.0","method":"call",
-  "params":[api, method, args],"id":n}`.
-- **Serialization:** little-endian ints; strings are a LEB128 varint
-  length + UTF-8 bytes; arrays are a varint count + items; an
-  operation is a varint id + its fields in order; a transaction is
-  `ref_block_num:uint16`, `ref_block_prefix:uint32`,
-  `expiration:uint32` (unix seconds), operations, extensions
-  (`array<string>`). `vote` weight is a uint16 LE (not a varint).
-  Assets are `int64` amount scaled by 10^precision + `uint8`
-  precision + 7-byte symbol, zero-padded — with the symbol mapped
-  to its legacy Steem name on the wire (`HIVE` → `STEEM`,
-  `HBD` → `SBD`), exactly as dhive's `AssetSerializer` does
-  (`steem_symbols()`); the JSON form keeps the Hive name.
-  `comment_options` extensions are static variants: variant 0 is
-  `{beneficiaries: [{account, weight}]}`.
-- **Ref block:** derived from `condenser_api.
-  get_dynamic_global_properties` — `ref_block_num =
-  head_block_number & 0xffff`; `ref_block_prefix` is the little-endian
-  uint32 of `head_block_id` bytes `[4..8]`. `get_block_header` alone
-  cannot yield `ref_block_prefix` (it returns no block id), so the
-  client does not use it for that; `getBlockHeader` is exposed for
-  callers that need the header itself.
-- **Account history:** `account_history_api.get_account_history`
-  returns `{"history": [[seq, {block, timestamp, op, trx_id,
-  ...}], ...]}`; each op is `{type: "<name>_operation", value:
-  {...}}` and money is a NAI object `{nai, amount, precision}`
-  (`@@000000021` HIVE, `@@000000013` HBD, `@@000000037` VESTS —
-  verified live 2026-11-05: a `claim_reward_balance` op carries
-  `reward_hbd`/`reward_hive`/`reward_vests` with exactly those
-  nais). The parser strips the `_operation` suffix and formats NAI
-  amounts as legacy `"1.234 HIVE"` strings (BigInt arithmetic, so
-  no float rounding); the legacy `[name, fields]` tuple shape and
-  bare-list results still parse. Unknown NAIs pass through as raw
-  objects, so no data is lost.
-- **Signing:** digest = `sha256(chain_id || serialized_tx)`; ECDSA
-  secp256k1 with an RFC 6979 deterministic nonce (HMAC-SHA256) where
-  the nonce function receives additional input
-  `sha256(message || attempts)`; attempts `1, 2, …` are retried until
-  the signature is canonical (neither `r` nor `s` has the high bit
-  set and neither has an unnecessary leading zero); `s` is normalised
-  to the low half of `n` (recovery bit flipped when `s` is flipped).
-  The wire signature is 65 bytes
-  `[recovery + 31, r (32), s (32)]`, hex-encoded in the JSON-RPC
-  broadcast.
-- **WIF:** `0x80 || secret` + double-SHA256 checksum, base58.
-  Public key: `STM` + base58(compressed 33-byte point +
-  `ripemd160(key)[0:4]`).
-- **HiveAuth:** WebSocket `wss://has.hiveauth.com`; messages
-  `auth_req` / `auth_wait` / `auth_ack` / `auth_nack` and `sign_req` /
-  `sign_wait` / `sign_ack` / `sign_nack`. `data` fields are
-  AES-encrypted CryptoJS-style (EVP_BytesToKey with MD5 +
-  AES-256-CBC + PKCS7, output `base64("Salted__" || salt ||
-  ciphertext)`). `auth_req_data` is `{app: {name, description, icon},
-  challenge?}`; `sign_req_data` is `{key_type: posting|active, ops:
-  [...], broadcast: bool}`; `sign_ack` carries `txID` or
-  `signed_transaction`; approval expires after 60 s.
-- **Keychain (hive-uri):** `hive://sign/op/<base64url(JSON op)>`,
-  `hive://sign/ops/<base64url(JSON op array)>`,
-  `hive://sign/tx/<base64url(JSON tx)>`; params `s` (signer) and
-  `cb` (base64url callback URL, `{{id}}` / `{{sig}}` templates);
-  base64url **without** padding. (Dart's `Uri.parse` treats the
-  first segment of `hive://sign/...` and `has://auth_req/...` as the
-  host — the parsers in `auth.dart` account for that.)
-
-Divergences from dhive: none in the v1 wire format — the
-serialisation and signatures are verified byte-for-byte against
-dhive (see test vectors below). dhive's `get_block_header`-based
-ref-block path was deliberately **not** ported (see the ref-block
-note above); dhive also exposes many more operations and APIs that
-v1 does not.
-
-## Test vectors
-
-All vectors are in `test/` and pass with `dart test` (73 tests).
-Sources:
-
-- **Key pairs** — dhive `test/crypto.ts`:
-  - main private `5K2yDAd9KAZ3ZitBsAPyRka9PLFemUrbcL6UziZiPaw2c6jCeLH`
-    → public `STM8QykigLRi9ZUcNy1iXGY3KjRuCiLM8Ga49LHti1F8hgawKFc3K`
-  - testnet private
-    `5JQy7moK9SvNNDxn8rKNfQYFME5VDYC2j9Mv2tb7uXV5jz3fQR8` →
-    public `STX8FiV6v7yqYWTZz8WuFDckWr62L9X34hCy6koe8vd2cDJHimtgM`
-  - `PrivateKey.fromLogin('foo', 'barman')` →
-    `STM87F7tN56tAUL2C6J9Gzi9HzgNpZdi6M2cLQo7TjDU5v178QsYA`
-  - `PrivateKey.fromSeed('hello')` →
-    `STM7s4VJuYFfHq8HCPpgC649Lu7CjA1V9oXgPfv8f3fszKMk3Kny9`
-- **Signatures** — dhive `test/crypto.ts` plus a live Node run of
-  `@hiveio/dhive` 1.3.2 (see `test/transaction_test.dart`):
-  vote, `custom_json` and `comment` transactions with
-  `ref_block_num` 1234, `ref_block_prefix` 1122334455, expiration
-  `2017-07-15T16:51:19Z`, compared as serialized hex, digest and
-  signature — byte-for-byte equal to dhive.
-- **`comment_options`** — live Node run of dhive 1.3.2
-  (`test/serializer_test.dart`): author `alice`, permlink
-  `gloti-yumi-1234567890123`, `max_accepted_payout`
-  `1000000.000 HBD`, `percent_hbd` 10000, `allow_votes` /
-  `allow_curation_rewards` true, one beneficiary (`hivepen`,
-  weight 1000), same ref block / expiration as above — serialized
-  hex byte-for-byte equal to dhive, plus the JSON form and the
-  empty-extensions variant.
-- **HAS encryption** — ciphertext produced by the real `crypto-js`
-  library (Node) in `test/has_crypto_test.dart`: passphrase
-  `test-auth-key-123` decrypts to
-  `{"app":{"name":"gloti"},"challenge":"abc"}`. A fixed
-  key/IV AES-256-CBC vector is also in the tests.
-- **hive-uri** — the vote-op deep link from the `hive-uri` docs
-  (`hive://sign/op/WyJ2b3RlIix7InZvdGVyIjoiZm9vIiwiYXV0aG9yIjoi
-  YmFyIiwicGVybWxpbmsiOiJiYXoiLCJ3ZWlnaHQiOjEwMDAwfV0`) decodes to
-  the expected vote op JSON.
-
-## Running the tests
-
-```sh
-dart analyze   # must be clean
-dart test      # 73 tests, all offline (fake HTTP clients only)
-```
-
-`dart example/main.dart` performs a live read-only smoke check
-against `api.hive.blog` (no keys involved).
-
-## What is NOT in v1 (v2 scope)
-
-- Other operations: `vote`, `transfer`, `delegate_vesting_shares`,
-  `account_update`, etc.
-- Posting with images / comments with full metadata handling.
-- Streaming APIs, `condenser_api.get_followers`-style social reads,
-  market / witness / RC queries.
-- Key management helpers beyond WIF/seed/login derivation.
-- A HiveAuth WebSocket client (v1 only builds/decodes the messages;
-  the app owns the socket).
-
-## Files
-
-| File | Contents |
+| Area | Status |
 | --- | --- |
-| `lib/src/client.dart` | `HiveClient`: JSON-RPC reads, failover, `prepareTransaction`, opt-in `broadcast` |
-| `lib/src/transaction.dart` | `HiveTransaction` / `HiveSignedTransaction`: ref-block derivation, digest, signing, JSON form |
-| `lib/src/operations.dart` | `HiveOperation`: `customJson`, `comment`, `commentOptions` (+ `HiveBeneficiary`) |
-| `lib/src/serializer.dart` | `TxWriter`: LE ints, varints, strings, arrays, bool, int64, assets; operation ids |
-| `lib/src/crypto.dart` | `HivePrivateKey` / `HivePublicKey` / `HiveSignature`: secp256k1, RFC 6979, WIF, fromSeed/fromLogin |
-| `lib/src/has_crypto.dart` | CryptoJS-compatible AES (EVP_BytesToKey + AES-256-CBC) for HAS |
-| `lib/src/auth.dart` | `HiveAuth` (HAS messages), `HiveAuthPayload`, `HiveKeychain` (hive-uri deep links) |
-| `lib/src/models.dart` | Plain models for the node responses used by v1 |
-| `lib/src/constants.dart` | Chain id, default nodes, timeouts |
-| `lib/src/utils.dart` | Hex, base58, SHA-256/512, RIPEMD-160, MD5 helpers |
+| JSON-RPC reads (accounts, content, history, properties, headers) | ✅ |
+| Operations: `custom_json`, `comment`, `comment_options` (incl. beneficiaries) | ✅ |
+| Offline signing (RFC 6979, canonical low-s, dhive-compatible) | ✅ |
+| HiveAuth message building/decoding | ✅ |
+| Hive Keychain deep links | ✅ |
+| Other operations (`vote`, `transfer`, `delegate_vesting_shares`, …) | Not yet — see roadmap |
+| Streaming APIs, followers, market / witness / RC queries | Not yet |
+| A HiveAuth WebSocket client (v0.2.0 only builds/decodes messages) | Not yet |
+
+Serialization and signatures are verified byte-for-byte against
+dhive 1.3.2 (vote, `custom_json`, `comment`, and `comment_options`
+transactions). The protocol details — chain id, asset encoding,
+ref-block derivation, HAS encryption — are documented in the
+repository.
+
+## Contributing
+
+Contributions are welcome — bug reports, new operations, better
+docs, and test vectors.
+
+- **Issues:** please open one at
+  <https://github.com/hivepen/hive-dart/issues> with a minimal
+  reproduction when possible.
+- **Pull requests:** fork the repo, add tests for your change, and
+  make sure `dart analyze` is clean and `dart test` passes before
+  opening the PR. Keep changes focused: one PR, one concern.
+- **Compatibility first:** wire-format changes must stay
+  byte-compatible with dhive; add a test vector proving it.
+- **Code of conduct:** be kind and assume good intent. Maintainers
+  may close issues or PRs that are abusive, spam, or out of scope.
+
+## License
+
+MIT — see [LICENSE](https://github.com/hivepen/hive-dart/blob/main/LICENSE).
+
+## Links
+
+- Repository: <https://github.com/hivepen/hive-dart>
+- Issue tracker: <https://github.com/hivepen/hive-dart/issues>
+- Hive docs: <https://developers.hive.io/>
+- dhive (JS reference implementation): <https://github.com/openhive-network/dhive>
+- HiveAuth docs: <https://docs.hiveauth.com/>

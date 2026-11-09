@@ -2,7 +2,7 @@
 // hive-uri spec (hive:// deep links).
 import 'dart:convert';
 
-import 'package:hive_dart/hive_dart.dart';
+import 'package:hiveblockchain_dart/hiveblockchain_dart.dart';
 import 'package:test/test.dart';
 
 void main() {

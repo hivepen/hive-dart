@@ -1,6 +1,7 @@
-name: hive_dart
-description: Pure-Dart client for the Hive blockchain — JSON-RPC reads, offline transaction building/signing (custom_json, comment, comment_options), and HiveAuth / Hive Keychain auth helpers. No Flutter dependency.
+name: hiveblockchain_dart
+description: "Pure-Dart client for the Hive blockchain: JSON-RPC reads, offline transaction signing, HiveAuth and Keychain auth helpers."
 version: 0.2.0
+homepage: https://github.com/hivepen/hive-dart
 repository: https://github.com/hivepen/hive-dart
 issue_tracker: https://github.com/hivepen/hive-dart/issues
 

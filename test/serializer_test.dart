@@ -2,7 +2,7 @@
 // (live Node run, see README "Test vectors").
 import 'dart:typed_data';
 
-import 'package:hive_dart/hive_dart.dart';
+import 'package:hiveblockchain_dart/hiveblockchain_dart.dart';
 import 'package:test/test.dart';
 
 void main() {
